@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Search,
   Share2,
+  Trash2,
   X,
 } from 'lucide-react';
 
@@ -20,11 +21,31 @@ const storageKeys = {
   platform: 'akina-live:platform',
 };
 
+// 从 localStorage 读取收藏列表，支持旧版 string[] 和新版 channel[] 对象兼容
 function readFavorites() {
   try {
-    return new Set(JSON.parse(localStorage.getItem(storageKeys.favorites) || '[]'));
+    const raw = JSON.parse(localStorage.getItem(storageKeys.favorites) || '[]');
+    const map = new Map();
+    if (Array.isArray(raw)) {
+      raw.forEach((item) => {
+        if (typeof item === 'string') {
+          map.set(item, { id: item, title: '未命名收藏', stream: '', image: '' });
+        } else if (item && item.id) {
+          map.set(item.id, {
+            id: item.id,
+            title: item.title || '收藏频道',
+            image: item.image || '',
+            stream: item.stream || '',
+            streamType: item.streamType || '',
+            platformId: item.platformId || '',
+            platformTitle: item.platformTitle || '',
+          });
+        }
+      });
+    }
+    return map;
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
@@ -77,26 +98,161 @@ function PlatformList({ platforms, selectedId, onSelect, loading }) {
 }
 
 function ChannelCard({ channel, selected, favorite, onPlay, onFavorite }) {
+  const displayTitle = channel.title || '未知频道';
   return (
     <article className={`channel-card ${selected ? 'is-playing' : ''}`}>
-      <button className="channel-cover" type="button" onClick={onPlay} aria-label={`播放 ${channel.title}`}>
-        <ImageWithFallback src={channel.image} alt={channel.title} className="channel-image" />
+      <button className="channel-cover" type="button" onClick={onPlay} aria-label={`播放 ${displayTitle}`}>
+        <ImageWithFallback src={channel.image} alt={displayTitle} className="channel-image" />
         <span className="live-badge"><i />直播</span>
         <span className="play-button"><Play fill="currentColor" aria-hidden="true" /></span>
       </button>
       <div className="channel-meta">
-        <button className="channel-title" type="button" onClick={onPlay}>{channel.title}</button>
+        <div className="channel-info-wrapper">
+          <button className="channel-title" type="button" onClick={onPlay} title={displayTitle}>
+            {displayTitle}
+          </button>
+          {channel.platformTitle && (
+            <span className="channel-platform-tag">{channel.platformTitle}</span>
+          )}
+        </div>
         <button
           className={`icon-button favorite-button ${favorite ? 'is-active' : ''}`}
           type="button"
           onClick={onFavorite}
-          aria-label={favorite ? `取消收藏 ${channel.title}` : `收藏 ${channel.title}`}
+          aria-label={favorite ? `取消收藏 ${displayTitle}` : `收藏 ${displayTitle}`}
           title={favorite ? '取消收藏' : '收藏'}
         >
           <Heart fill={favorite ? 'currentColor' : 'none'} aria-hidden="true" />
         </button>
       </div>
     </article>
+  );
+}
+
+// “我的收藏”侧边抽屉组件
+function FavoritesDrawer({ open, onClose, favorites, onPlayChannel, onRemoveFavorite, onClearAll }) {
+  const [filterQuery, setFilterQuery] = useState('');
+
+  if (!open) return null;
+
+  const favoriteList = Array.from(favorites.values());
+  const keyword = filterQuery.trim().toLowerCase();
+  const filteredList = favoriteList.filter((item) => {
+    if (!keyword) return true;
+    const titleMatch = item.title ? item.title.toLowerCase().includes(keyword) : false;
+    const platformMatch = item.platformTitle ? item.platformTitle.toLowerCase().includes(keyword) : false;
+    return titleMatch || platformMatch;
+  });
+
+  return (
+    <div className="favorites-drawer-overlay" role="dialog" aria-modal="true" aria-label="我的收藏列表">
+      <button className="drawer-backdrop" type="button" onClick={onClose} aria-label="关闭我的收藏" />
+      <div className="favorites-drawer-panel">
+        <div className="drawer-header">
+          <div className="drawer-header-title">
+            <Heart className="heart-icon" fill="currentColor" aria-hidden="true" />
+            <span>我的收藏</span>
+            <span className="drawer-count-badge">{favorites.size}</span>
+          </div>
+          <div className="drawer-header-actions">
+            {favorites.size > 0 && (
+              <button
+                type="button"
+                className="clear-all-btn"
+                onClick={onClearAll}
+                title="清空收藏"
+              >
+                <Trash2 size={15} />
+                <span>清空</span>
+              </button>
+            )}
+            <button className="icon-button" type="button" onClick={onClose} aria-label="关闭" title="关闭">
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        {favorites.size > 0 && (
+          <div className="drawer-search-bar">
+            <Search size={16} aria-hidden="true" />
+            <input
+              type="search"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="在收藏中搜索..."
+            />
+            {filterQuery && (
+              <button type="button" onClick={() => setFilterQuery('')} title="清空搜索">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="drawer-body">
+          {favoriteList.length === 0 ? (
+            <div className="empty-favorites">
+              <Heart className="empty-heart-icon" aria-hidden="true" />
+              <h3>暂无收藏的直播</h3>
+              <p>在直播卡片或播放器右下角点击爱心图标，即可随时收藏您喜爱的直播频道。</p>
+            </div>
+          ) : filteredList.length === 0 ? (
+            <div className="empty-favorites">
+              <Search aria-hidden="true" />
+              <h3>未找到匹配的收藏</h3>
+            </div>
+          ) : (
+            <div className="favorites-items-list">
+              {filteredList.map((item) => {
+                const itemTitle = item.title || '收藏频道';
+                return (
+                  <div className="favorite-item-card" key={item.id}>
+                    <button
+                      className="fav-item-cover"
+                      type="button"
+                      onClick={() => onPlayChannel(item)}
+                      title={`播放 ${itemTitle}`}
+                    >
+                      <ImageWithFallback src={item.image} alt={itemTitle} className="fav-item-img" />
+                      <span className="fav-play-overlay"><Play fill="currentColor" size={16} /></span>
+                    </button>
+                    <div className="fav-item-info">
+                      <button
+                        type="button"
+                        className="fav-item-title"
+                        onClick={() => onPlayChannel(item)}
+                        title={itemTitle}
+                      >
+                        {itemTitle}
+                      </button>
+                      <span className="fav-platform-tag">{item.platformTitle || '直播频道'}</span>
+                    </div>
+                    <div className="fav-item-actions">
+                      <button
+                        type="button"
+                        className="fav-action-btn play-btn"
+                        onClick={() => onPlayChannel(item)}
+                        title="立即播放"
+                      >
+                        <Play size={14} fill="currentColor" />
+                      </button>
+                      <button
+                        type="button"
+                        className="fav-action-btn delete-btn"
+                        onClick={() => onRemoveFavorite(item.id)}
+                        title="取消收藏"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -112,9 +268,11 @@ function App() {
   const [view, setView] = useState('all');
   const [favorites, setFavorites] = useState(readFavorites);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [favoritesDrawerOpen, setFavoritesDrawerOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const [isPlayerOutView, setIsPlayerOutView] = useState(false);
   const [userClosedMini, setUserClosedMini] = useState(false);
+
   const playerAnchorRef = useRef(null);
   const playerFrameRef = useRef(null);
   const livePlayerRef = useRef(null);
@@ -152,6 +310,7 @@ function App() {
 
   useEffect(loadPlatforms, [loadPlatforms]);
 
+  // 加载当前平台的频道数据，并注入平台信息
   useEffect(() => {
     if (!selectedPlatform) return undefined;
     const controller = new AbortController();
@@ -165,8 +324,13 @@ function App() {
     fetchJson(`/api/channels/${selectedPlatform.id}`, controller.signal)
       .then(({ data }) => {
         if (requestId !== channelRequestRef.current) return;
-        setChannels(data);
-        setSelectedChannel(data[0] || null);
+        const enriched = (data || []).map((item) => ({
+          ...item,
+          platformId: selectedPlatform.id,
+          platformTitle: selectedPlatform.title,
+        }));
+        setChannels(enriched);
+        setSelectedChannel(enriched[0] || null);
       })
       .catch((fetchError) => {
         if (requestId === channelRequestRef.current && fetchError.name !== 'AbortError') {
@@ -179,8 +343,34 @@ function App() {
     return () => controller.abort();
   }, [selectedPlatform]);
 
+  // 关键：当 channels 加载完成时，自动用最新的 channel 信息合并补全旧的收藏数据（解决旧数据没有 title/stream/image 的问题）
   useEffect(() => {
-    localStorage.setItem(storageKeys.favorites, JSON.stringify([...favorites]));
+    if (!channels || channels.length === 0) return;
+    setFavorites((currentMap) => {
+      let hasUpdate = false;
+      const nextMap = new Map(currentMap);
+      channels.forEach((ch) => {
+        if (nextMap.has(ch.id)) {
+          const existing = nextMap.get(ch.id);
+          // 如果信息缺失或标题未命名，使用最新拉取的频道数据更新
+          if (!existing.title || existing.title === '未命名收藏' || existing.title === '收藏频道' || !existing.stream) {
+            nextMap.set(ch.id, {
+              ...ch,
+              platformId: selectedPlatform?.id || existing.platformId || '',
+              platformTitle: selectedPlatform?.title || existing.platformTitle || '',
+            });
+            hasUpdate = true;
+          }
+        }
+      });
+      return hasUpdate ? nextMap : currentMap;
+    });
+  }, [channels, selectedPlatform]);
+
+  // 持久化保存收藏项（完整 JSON 格式）
+  useEffect(() => {
+    const items = Array.from(favorites.values());
+    localStorage.setItem(storageKeys.favorites, JSON.stringify(items));
   }, [favorites]);
 
   useEffect(() => {
@@ -228,32 +418,54 @@ function App() {
   }, [selectedPlatform]);
 
   useEffect(() => {
-    if (!mobileMenuOpen) return undefined;
+    if (!mobileMenuOpen && !favoritesDrawerOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') setMobileMenuOpen(false);
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false);
+        setFavoritesDrawerOpen(false);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [mobileMenuOpen]);
+  }, [mobileMenuOpen, favoritesDrawerOpen]);
 
+  // 修复与强化搜索过滤逻辑
   const filteredChannels = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase('zh-CN');
+    const keyword = query.trim().toLowerCase();
+
+    // 如果处于"收藏"视图，展示全局所有已收藏的频道
+    if (view === 'favorites') {
+      const allFavs = Array.from(favorites.values());
+      return allFavs.filter((channel) => {
+        if (!keyword) return true;
+        const titleMatch = channel.title ? channel.title.toLowerCase().includes(keyword) : false;
+        const platformMatch = channel.platformTitle ? channel.platformTitle.toLowerCase().includes(keyword) : false;
+        return titleMatch || platformMatch;
+      });
+    }
+
+    // 默认展示当前平台的频道，进行频道名称模糊匹配
     return channels.filter((channel) => {
-      const matchesView = view === 'all' || favorites.has(channel.id);
-      const matchesQuery = !keyword || channel.title.toLocaleLowerCase('zh-CN').includes(keyword);
-      return matchesView && matchesQuery;
+      if (!keyword) return true;
+      return channel.title ? channel.title.toLowerCase().includes(keyword) : false;
     });
   }, [channels, favorites, query, view]);
 
+  // “接着看”列表同步响应搜索筛选
   const upNext = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
     if (!selectedChannel || channels.length < 2) return [];
-    return channels.filter((channel) => channel.id !== selectedChannel.id);
-  }, [channels, selectedChannel]);
+    return channels.filter((channel) => {
+      const isNotCurrent = channel.id !== selectedChannel.id;
+      const matchesQuery = !keyword || (channel.title && channel.title.toLowerCase().includes(keyword));
+      return isNotCurrent && matchesQuery;
+    });
+  }, [channels, selectedChannel, query]);
 
   const selectPlatform = (platform) => {
     setSelectedPlatform(platform);
@@ -268,15 +480,68 @@ function App() {
     setUserClosedMini(false);
   };
 
+  // 播放收藏面板中的频道
+  const playFavoriteChannel = (favChannel) => {
+    // 1. 如果有对应 platformId 且不等于当前平台，自动联动切换平台（这也会触发后端注册该平台的流 token）
+    if (favChannel.platformId && selectedPlatform?.id !== favChannel.platformId) {
+      const targetPlatform = platforms.find((p) => p.id === favChannel.platformId);
+      if (targetPlatform) {
+        setSelectedPlatform(targetPlatform);
+      }
+    }
+
+    // 2. 播放该频道
+    setSelectedChannel(favChannel);
+    setUserClosedMini(false);
+    setFavoritesDrawerOpen(false);
+    if (favChannel.title) {
+      setNotice(`正在播放：${favChannel.title}`);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const isMiniActive = isPlayerOutView && Boolean(selectedChannel) && !userClosedMini;
 
-  const toggleFavorite = (channelId) => {
+  // 切换收藏状态，自动补充完整频道及平台元数据
+  const toggleFavorite = (channel, targetPlatform = null) => {
+    if (!channel || !channel.id) return;
     setFavorites((current) => {
-      const next = new Set(current);
-      if (next.has(channelId)) next.delete(channelId);
-      else next.add(channelId);
+      const next = new Map(current);
+      if (next.has(channel.id)) {
+        next.delete(channel.id);
+        setNotice(`已取消收藏：${channel.title || '频道'}`);
+      } else {
+        const plat = targetPlatform || selectedPlatform || {};
+        next.set(channel.id, {
+          id: channel.id,
+          title: channel.title || '未命名频道',
+          image: channel.image || '',
+          stream: channel.stream || '',
+          streamType: channel.streamType || '',
+          platformId: plat.id || channel.platformId || '',
+          platformTitle: plat.title || channel.platformTitle || '直播',
+        });
+        setNotice(`已添加收藏：${channel.title || '频道'}`);
+      }
       return next;
     });
+  };
+
+  const removeFavorite = (channelId) => {
+    setFavorites((current) => {
+      const next = new Map(current);
+      const target = next.get(channelId);
+      next.delete(channelId);
+      if (target?.title) setNotice(`已取消收藏：${target.title}`);
+      return next;
+    });
+  };
+
+  const clearAllFavorites = () => {
+    if (window.confirm('确定要清空所有收藏的直播频道吗？')) {
+      setFavorites(new Map());
+      setNotice('已清空全部收藏');
+    }
   };
 
   const shareChannel = async () => {
@@ -310,13 +575,15 @@ function App() {
             <span className="brand-mark"><Mountain aria-hidden="true" /></span>
             <span>秋名山直播</span>
           </a>
+
+          {/* 搜索框：支持模糊匹配搜索频道 */}
           <label className="search-box">
             <Search aria-hidden="true" />
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索当前平台"
+              placeholder="搜索直播频道名称..."
               aria-label="搜索当前平台频道"
             />
             {query && (
@@ -325,6 +592,21 @@ function App() {
               </button>
             )}
           </label>
+
+          {/* 我的收藏快捷入口按钮 */}
+          <button
+            className="topbar-favorites-btn"
+            type="button"
+            onClick={() => setFavoritesDrawerOpen(true)}
+            title="查看我的收藏列表"
+          >
+            <Heart className="heart-icon" fill={favorites.size > 0 ? 'currentColor' : 'none'} aria-hidden="true" />
+            <span className="btn-text">我的收藏</span>
+            {favorites.size > 0 && (
+              <span className="favorites-badge">{favorites.size}</span>
+            )}
+          </button>
+
           <div className="topbar-status"><i />直播信号</div>
         </div>
       </header>
@@ -416,7 +698,7 @@ function App() {
                         <button
                           className={`icon-button action-button ${favorites.has(selectedChannel.id) ? 'is-active' : ''}`}
                           type="button"
-                          onClick={() => toggleFavorite(selectedChannel.id)}
+                          onClick={() => toggleFavorite(selectedChannel)}
                           aria-label={favorites.has(selectedChannel.id) ? '取消收藏当前频道' : '收藏当前频道'}
                           title={favorites.has(selectedChannel.id) ? '取消收藏' : '收藏'}
                         >
@@ -448,7 +730,7 @@ function App() {
                 <aside className="up-next" aria-label="接着看">
                   <div className="section-title-row">
                     <h2>接着看</h2>
-                    <span>{channels.length} 个频道</span>
+                    <span>{upNext.length} 个频道</span>
                   </div>
                   <div className="up-next-list" ref={upNextListRef} tabIndex="0" aria-label="可滚动频道列表">
                     {upNext.map((channel) => (
@@ -469,7 +751,10 @@ function App() {
                 <div className="channel-heading-row">
                   <div>
                     <p>{selectedPlatform?.title || '直播平台'}</p>
-                    <h2 id="channel-heading">直播频道</h2>
+                    <h2 id="channel-heading">
+                      {view === 'favorites' ? '我的收藏' : '直播频道'}
+                      {query && <span className="search-query-badge">搜: "{query}"</span>}
+                    </h2>
                   </div>
                   <div className="view-tabs" role="tablist" aria-label="频道筛选">
                     <button
@@ -485,11 +770,13 @@ function App() {
                       aria-selected={view === 'favorites'}
                       className={view === 'favorites' ? 'is-active' : ''}
                       onClick={() => setView('favorites')}
-                    >收藏</button>
+                    >
+                      收藏 ({favorites.size})
+                    </button>
                   </div>
                 </div>
 
-                {channelLoading ? (
+                {channelLoading && view !== 'favorites' ? (
                   <div className="channel-grid channel-grid-loading" aria-label="正在加载频道">
                     {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
                   </div>
@@ -502,14 +789,18 @@ function App() {
                         selected={selectedChannel?.id === channel.id}
                         favorite={favorites.has(channel.id)}
                         onPlay={() => playChannel(channel)}
-                        onFavorite={() => toggleFavorite(channel.id)}
+                        onFavorite={() => toggleFavorite(channel)}
                       />
                     ))}
                   </div>
                 ) : (
                   <div className="empty-state">
                     {view === 'favorites' ? <Heart aria-hidden="true" /> : <Search aria-hidden="true" />}
-                    <h3>{view === 'favorites' ? '还没有收藏频道' : '没有找到相关频道'}</h3>
+                    <h3>
+                      {view === 'favorites'
+                        ? (query ? '收藏中没有找到匹配频道' : '还没有收藏频道')
+                        : '没有找到相关频道'}
+                    </h3>
                   </div>
                 )}
               </section>
@@ -537,6 +828,16 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 我的收藏侧边抽屉 */}
+      <FavoritesDrawer
+        open={favoritesDrawerOpen}
+        onClose={() => setFavoritesDrawerOpen(false)}
+        favorites={favorites}
+        onPlayChannel={playFavoriteChannel}
+        onRemoveFavorite={removeFavorite}
+        onClearAll={clearAllFavorites}
+      />
 
       {notice && <div className="toast" role="status">{notice}</div>}
     </div>
